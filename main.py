@@ -1,0 +1,67 @@
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import tempfile
+import base64
+import os
+import platform
+import subprocess
+import uuid
+import sys
+
+app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.post("/print")
+async def print_image(request: Request):
+    try:
+        data = await request.json()
+        base64_image = data.get("image")
+
+        if not base64_image:
+            raise HTTPException(status_code=400, detail="Missing 'image' field")
+
+        # Strip base64 prefix if present
+        if "," in base64_image:
+            base64_image = base64_image.split(",")[1]
+
+        # Save to temp file
+        image_bytes = base64.b64decode(base64_image)
+        temp_file = os.path.join(tempfile.gettempdir(), f"receipt_{uuid.uuid4()}.jpg")
+        with open(temp_file, "wb") as f:
+            f.write(image_bytes)
+
+        print("Saved to:", temp_file)
+
+        system = platform.system()
+
+        if system == "Windows":
+            subprocess.Popen([
+                "cmd", "/c", "start", "/min", "", "/print", temp_file
+            ], shell=True)
+        elif system == "Linux":
+            subprocess.Popen(["xdg-open", temp_file])
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported OS")
+
+        return {"message": "Printed successfully"}
+
+    except Exception as e:
+        print("Error:", str(e))
+        raise HTTPException(status_code=400, detail="Invalid image data")
+
+# Main block to support --port=xxxx
+if __name__ == "__main__":
+    import uvicorn
+    port = 5050
+    for arg in sys.argv:
+        if arg.startswith("--port="):
+            port = int(arg.split("=")[1])
+    uvicorn.run(app, host="127.0.0.1", port=port, reload=False)
