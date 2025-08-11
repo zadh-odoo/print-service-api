@@ -8,6 +8,9 @@ import subprocess
 import uuid
 import sys
 import threading
+import struct
+import win32print
+from PIL import Image, ImageEnhance
 
 app = FastAPI()
 
@@ -19,18 +22,72 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+PRINTER_WIDTH = 576  # adjust to your thermal printer's pixel width
+
+
 def send_to_printer(temp_file, system):
     try:
         if system == "Windows":
-            subprocess.Popen([
-                "cmd", "/c", "start", "/min", "", "/print", temp_file
-            ], shell=True)
+            printer_name = win32print.GetDefaultPrinter()
+            print(f"Printing {temp_file} to {printer_name}")
+
+            # Load and process the image
+            im = Image.open(temp_file)
+            w = PRINTER_WIDTH
+            h = int(im.height * (w / im.width))
+            im = im.resize((w, h), Image.LANCZOS)
+
+            # Increase brightness & contrast
+            enhancer_brightness = ImageEnhance.Brightness(im)
+            im = enhancer_brightness.enhance(1.3)  # 1.0 = original, >1 brighter
+
+            enhancer_contrast = ImageEnhance.Contrast(im)
+            im = enhancer_contrast.enhance(1.5)  # >1 = more contrast
+
+
+            im = im.convert("1")  # Convert to 1-bit monochrome
+
+            # Pack pixels into bytes for ESC/POS
+            width_bytes = (im.width + 7) // 8
+            bitmap = bytearray()
+            pixels = im.load()
+
+            for y in range(im.height):
+                for x in range(0, im.width, 8):
+                    byte = 0
+                    for bit in range(8):
+                        if x + bit < im.width:
+                            if pixels[x + bit, y] == 0:  # Black pixel
+                                byte |= 1 << (7 - bit)
+                    bitmap.append(byte)
+
+            # ESC/POS commands
+            data = bytearray()
+            data += b'\x1B\x40'  # Initialize
+            data += b'\x1D\x76\x30\x00'  # GS v 0 m
+            data += struct.pack('<2H', width_bytes, im.height)  # Width in bytes, height in dots
+            data += bitmap
+            data += b'\n\n\x1D\x56\x00'  # Feed & cut
+
+            # Send to printer in RAW mode
+            hPrinter = win32print.OpenPrinter(printer_name)
+            try:
+                hJob = win32print.StartDocPrinter(hPrinter, 1, ("ESC/POS Print", None, "RAW"))
+                win32print.StartPagePrinter(hPrinter)
+                win32print.WritePrinter(hPrinter, data)
+                win32print.EndPagePrinter(hPrinter)
+                win32print.EndDocPrinter(hPrinter)
+            finally:
+                win32print.ClosePrinter(hPrinter)
+
         elif system == "Linux":
-            subprocess.Popen(["xdg-open", temp_file])
+            subprocess.run(["lp", temp_file], check=True)
         else:
             print("Unsupported OS for printing")
+
     except Exception as e:
         print("Printer error:", str(e))
+
 
 @app.post("/print")
 async def print_image(request: Request):
@@ -41,24 +98,28 @@ async def print_image(request: Request):
         if not base64_image:
             raise HTTPException(status_code=400, detail="Missing 'image' field")
 
+        # Remove data URI prefix if present
         if "," in base64_image:
             base64_image = base64_image.split(",")[1]
 
         image_bytes = base64.b64decode(base64_image)
-        temp_file = os.path.join(tempfile.gettempdir(), f"receipt_{uuid.uuid4()}.jpg")
+
+        # Save image to temp file
+        temp_file = os.path.join(tempfile.gettempdir(), f"receipt_{uuid.uuid4()}.png")
         with open(temp_file, "wb") as f:
             f.write(image_bytes)
 
         print("Saved to:", temp_file)
 
-        # Start print job in a background thread (non-blocking)
+        # Print in a background thread
         threading.Thread(target=send_to_printer, args=(temp_file, platform.system()), daemon=True).start()
 
-        return {"message": "Print job sent"}  # Respond immediately
+        return {"message": "Print job sent"}
 
     except Exception as e:
         print("Error:", str(e))
         raise HTTPException(status_code=400, detail="Invalid image data")
+
 
 if __name__ == "__main__":
     import uvicorn
