@@ -10,7 +10,7 @@ import sys
 import threading
 import struct
 import win32print
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFilter
 
 app = FastAPI()
 
@@ -31,21 +31,43 @@ def send_to_printer(temp_file, system):
             printer_name = win32print.GetDefaultPrinter()
             print(f"Printing {temp_file} to {printer_name}")
 
-            # Load and process the image
+            # Load and process the image with enhanced quality
             im = Image.open(temp_file)
+            print(f"Original image size: {im.size}")
+            
+            # Calculate new dimensions maintaining aspect ratio
             w = PRINTER_WIDTH
             h = int(im.height * (w / im.width))
+            print(f"Resizing to: {w}x{h}")
+            
+            # Use high-quality resampling
             im = im.resize((w, h), Image.LANCZOS)
-
-            # Increase brightness & contrast
+            
+            # Apply sharpening filter to improve text clarity
+            print("Applying sharpening filter...")
+            im = im.filter(ImageFilter.UnsharpMask(radius=1.5, percent=150, threshold=3))
+            
+            # Enhance sharpness for crisp text
+            enhancer_sharpness = ImageEnhance.Sharpness(im)
+            im = enhancer_sharpness.enhance(1.5)  # Increase sharpness
+            
+            # Increase brightness for better visibility on thermal paper
+            print("Enhancing brightness...")
             enhancer_brightness = ImageEnhance.Brightness(im)
-            im = enhancer_brightness.enhance(1.3)  # 1.0 = original, >1 brighter
-
+            im = enhancer_brightness.enhance(1.4)  # Increased from 1.3 to 1.4
+            
+            # Increase contrast for better text definition
+            print("Enhancing contrast...")
             enhancer_contrast = ImageEnhance.Contrast(im)
-            im = enhancer_contrast.enhance(1.5)  # >1 = more contrast
-
-
-            im = im.convert("1")  # Convert to 1-bit monochrome
+            im = enhancer_contrast.enhance(1.8)  # Increased from 1.5 to 1.8
+            
+            # Convert to grayscale first for better dithering
+            print("Converting to grayscale...")
+            im = im.convert('L')
+            
+            # Apply Floyd-Steinberg dithering for better quality monochrome conversion
+            print("Converting to monochrome with dithering...")
+            im = im.convert('1', dither=Image.FLOYDSTEINBERG)
 
             # Pack pixels into bytes for ESC/POS
             width_bytes = (im.width + 7) // 8
