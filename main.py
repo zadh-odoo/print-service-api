@@ -49,17 +49,17 @@ def send_to_printer(temp_file, system):
             
             # Enhance sharpness for crisp text
             enhancer_sharpness = ImageEnhance.Sharpness(im)
-            im = enhancer_sharpness.enhance(1.5)  # Increase sharpness
+            im = enhancer_sharpness.enhance(1.5)
             
             # Increase brightness for better visibility on thermal paper
             print("Enhancing brightness...")
             enhancer_brightness = ImageEnhance.Brightness(im)
-            im = enhancer_brightness.enhance(1.4)  # Increased from 1.3 to 1.4
+            im = enhancer_brightness.enhance(1.4)  
             
             # Increase contrast for better text definition
             print("Enhancing contrast...")
             enhancer_contrast = ImageEnhance.Contrast(im)
-            im = enhancer_contrast.enhance(1.8)  # Increased from 1.5 to 1.8
+            im = enhancer_contrast.enhance(1.8)  
             
             # Convert to grayscale first for better dithering
             print("Converting to grayscale...")
@@ -89,7 +89,8 @@ def send_to_printer(temp_file, system):
             data += b'\x1D\x76\x30\x00'  # GS v 0 m
             data += struct.pack('<2H', width_bytes, im.height)  # Width in bytes, height in dots
             data += bitmap
-            data += b'\n\n\x1D\x56\x00'  # Feed & cut
+            data += b'\n\n\n\n\n'  # Add more line feeds to ensure content doesn't get cut
+            data += b'\x1D\x56\x00'  # Cut
 
             # Send to printer in RAW mode
             hPrinter = win32print.OpenPrinter(printer_name)
@@ -120,7 +121,6 @@ async def print_image(request: Request):
         if not base64_image:
             raise HTTPException(status_code=400, detail="Missing 'image' field")
 
-        # Remove data URI prefix if present
         if "," in base64_image:
             base64_image = base64_image.split(",")[1]
 
